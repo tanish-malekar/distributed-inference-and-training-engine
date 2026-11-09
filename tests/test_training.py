@@ -38,7 +38,7 @@ class TrainingTests(unittest.TestCase):
                             for p in model.parameters()))
         self.assertTrue(all(not torch.equal(before[n], p) for n, p in model.named_parameters()))
         settings = {"train_data": fingerprint(data)}
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
             checkpoint = save_checkpoint(model, tokenizer, optimizer, 1, settings, directory)
             with self.assertRaises(FileExistsError):
                 save_checkpoint(model, tokenizer, optimizer, 1, settings, directory)

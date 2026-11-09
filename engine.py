@@ -95,17 +95,24 @@ def restore_training(checkpoint, optimizer, settings, device):
 
 # Shift exactly once: scores at position t predict the token at position t+1.
 def next_token_loss(logits, batch):
-    targets = batch["input_ids"][:, 1:].clone()
-    # Mask by POSITION so a genuine EOS target is still trained, even if pad=EOS.
-    targets[batch["attention_mask"][:, 1:] == 0] = -100
-    count = int((targets != -100).sum().item())
+    labels = next_token_labels(batch)
+    count = int((labels != -100).sum().item())
     if count == 0:
         raise ValueError("Batch has no valid next-token targets")
     loss_sum = F.cross_entropy(
-        logits[:, :-1, :].reshape(-1, logits.shape[-1]), targets.reshape(-1),
+        logits.reshape(-1, logits.shape[-1]), labels.reshape(-1),
         ignore_index=-100, reduction="sum",
     )
     return loss_sum, count
+
+
+# Label for position t is the token at t+1; -100 marks positions with no valid target.
+# Masking is by POSITION so a genuine EOS target still trains even when pad == EOS.
+def next_token_labels(batch):
+    labels = torch.full_like(batch["input_ids"], -100)
+    labels[:, :-1] = batch["input_ids"][:, 1:]
+    labels[:, :-1][batch["attention_mask"][:, 1:] == 0] = -100
+    return labels
 
 
 # Resolve one device; CPU is the CLI default to avoid unintentional GPU execution.

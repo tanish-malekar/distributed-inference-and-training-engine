@@ -61,3 +61,23 @@ def fingerprint(data):
         digest.update(str(tuple(tensor.shape)).encode())
         digest.update(tensor.numpy().tobytes())
     return digest.hexdigest()
+
+
+# Pad a global batch to a FIXED row count divisible by dp * microbatches, then take this dp
+# rank's slice. Pipeline stages fix their buffer shapes on the first step, so every step must
+# have the same shape. Padding rows are fully masked: with a loss normalized by the GLOBAL
+# valid-token count they contribute exactly zero.
+def shard_global_batch(batch, dp_rank, dp, microbatches, rows):
+    multiple = dp * microbatches
+    padded = -(-rows // multiple) * multiple
+    have = len(batch["input_ids"])
+    if have > padded:
+        raise ValueError(f"Batch of {have} rows exceeds the fixed size {padded}")
+    if have < padded:
+        filler = padded - have
+        batch = {"input_ids": torch.cat([batch["input_ids"],
+                                         batch["input_ids"][:1].expand(filler, -1)]),
+                 "attention_mask": torch.cat([batch["attention_mask"],
+                                              torch.zeros_like(batch["attention_mask"][:1]).expand(filler, -1)])}
+    per_rank = padded // dp
+    return {name: tensor[dp_rank * per_rank:(dp_rank + 1) * per_rank] for name, tensor in batch.items()}

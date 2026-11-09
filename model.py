@@ -6,15 +6,21 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 DEFAULT_MODEL = "HuggingFaceTB/SmolLM2-135M"
 
 
-# Load architecture, pretrained weights, and the matching tokenizer on one device.
-def load_model(source: str, device: torch.device):
+# The tokenizer needs an EOS token; EOS also fills padding positions when none is defined.
+def load_tokenizer(source: str):
     tokenizer = AutoTokenizer.from_pretrained(source)
     if tokenizer.eos_token_id is None:
         raise ValueError("This baseline requires a tokenizer with an EOS token")
-    # EOS can also fill padding positions. The attention mask, NOT token identity,
-    # distinguishes real EOS tokens from padding when calculating the loss.
+    # The attention mask, NOT token identity, distinguishes real EOS tokens from padding
+    # when calculating the loss.
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token = tokenizer.eos_token
+    return tokenizer
+
+
+# Load architecture, pretrained weights, and the matching tokenizer on one device.
+def load_model(source: str, device: torch.device):
+    tokenizer = load_tokenizer(source)
     model = AutoModelForCausalLM.from_pretrained(
         source, dtype=torch.float32, attn_implementation="eager",
     ).to(device)

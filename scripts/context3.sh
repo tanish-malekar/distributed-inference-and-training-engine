@@ -52,38 +52,100 @@ case "$action" in
   check) remote "hostname; nvidia-smi" ;;
   sync) sync_source ;;
   setup) sync_source; prepare ;;
-  run|infer)
-    gpu="${2:-}"
-    if ! [[ "$gpu" =~ ^[0-9]+$ ]]; then
-      echo 'Supply a GPU index. See CONTEXT3.md.' >&2; exit 2
+  run|infer|smoke|nccl)
+    gpus="${2:-}"
+    # One index (0) or a comma-separated list (0,1,2,3). Only these GPUs are made visible.
+    if ! [[ "$gpus" =~ ^[0-9]+(,[0-9]+)*$ ]]; then
+      echo 'Supply a GPU index or comma-separated list, e.g. 0 or 0,1. See CONTEXT3.md.' >&2; exit 2
     fi
+    IFS=, read -r -a gpu_list <<< "$gpus"
+    if [[ "$(printf '%s\n' "${gpu_list[@]}" | sort -u | wc -l | tr -d ' ')" != "${#gpu_list[@]}" ]]; then
+      echo 'A GPU index appears more than once.' >&2; exit 2
+    fi
+    n="${#gpu_list[@]}"
     if [[ "$action" == run ]]; then
       steps="${3:-1}"
       if ! [[ "$steps" =~ ^[1-9][0-9]*$ ]]; then
         echo 'Step count must be positive.' >&2; exit 2
       fi
       if [[ $# -ge 3 ]]; then shift 3; else shift 2; fi
-      command=(.venv/bin/python -u train.py "$@" --steps "$steps" --device cuda)
+      script=train.py; extra=(--steps "$steps")
+    elif [[ "$action" == nccl ]]; then
+      shift 2
+      script=scripts/nccl_check.py; extra=()
+      set -- --dp "$n"   # only the process count matters for this check
+    elif [[ "$action" == smoke ]]; then
+      shift 2
+      script=scripts/parallel_smoke_test.py; extra=()
     else
       shift 2
-      command=(.venv/bin/python -u inference.py "$@" --device cuda)
+      script=inference.py; extra=()
+    fi
+    # dp * tp * pp (each defaults to 1) must equal the number of approved GPUs.
+    dp=1; tp=1; pp=1; args=("$@")
+    for ((i = 0; i < ${#args[@]}; i++)); do
+      case "${args[i]}" in
+        --dp) dp="${args[i+1]:-}" ;; --dp=*) dp="${args[i]#--dp=}" ;;
+        --tp) tp="${args[i+1]:-}" ;; --tp=*) tp="${args[i]#--tp=}" ;;
+        --pp) pp="${args[i+1]:-}" ;; --pp=*) pp="${args[i]#--pp=}" ;;
+      esac
+    done
+    for degree in "$dp" "$tp" "$pp"; do
+      if ! [[ "$degree" =~ ^[1-9][0-9]*$ ]]; then
+        echo '--dp, --tp and --pp must be positive integers.' >&2; exit 2
+      fi
+    done
+    if (( dp * tp * pp != n )); then
+      echo "dp*tp*pp = $((dp * tp * pp)) but $n GPU(s) were listed; they must match." >&2; exit 2
+    fi
+    if (( n == 1 )); then
+      command=(.venv/bin/python -u "$script" "$@" ${extra[@]+"${extra[@]}"} --device cuda)
+      phrase="RUN GPU $gpus"
+    else
+      # One process per approved GPU, single node; torch.distributed.run is torchrun's module form.
+      command=(.venv/bin/python -u -m torch.distributed.run --standalone --nproc-per-node "$n"
+        "$script" "$@" ${extra[@]+"${extra[@]}"} --device cuda)
+      phrase="RUN GPUS $gpus"
+    fi
+    # Optional: CONTEXT3_TIMEOUT=SECONDS stops a hung job; CONTEXT3_ENV="NCCL_DEBUG=INFO ..." sets
+    # remote environment variables (names and simple values only, so nothing can inject shell code).
+    if [[ -n "${CONTEXT3_TIMEOUT:-}" ]]; then
+      if ! [[ "$CONTEXT3_TIMEOUT" =~ ^[1-9][0-9]*$ ]]; then
+        echo 'CONTEXT3_TIMEOUT must be a positive number of seconds.' >&2; exit 2
+      fi
+      command=(timeout -k 10 "$CONTEXT3_TIMEOUT" "${command[@]}")
+    fi
+    job_env=""
+    for assignment in ${CONTEXT3_ENV:-}; do
+      if ! [[ "$assignment" =~ ^[A-Z_][A-Z0-9_]*=[A-Za-z0-9_.,:/-]*$ ]]; then
+        echo "Rejected CONTEXT3_ENV entry: $assignment" >&2; exit 2
+      fi
+      job_env+="export $assignment; "
+    done
+    # Direct GPU-to-GPU (P2P) transfers hang on Context3 (an NCCL all_reduce between GPUs 0 and 2
+    # never completes); staging through host memory works. Override with CONTEXT3_ENV=NCCL_P2P_DISABLE=0.
+    if (( n > 1 )) && [[ " ${CONTEXT3_ENV:-} " != *" NCCL_P2P_DISABLE="* ]]; then
+      job_env+="export NCCL_P2P_DISABLE=1; "
     fi
     sync_source
     prepare
-    remote "cd '$REMOTE_DIR' && .venv/bin/python scripts/check_gpu.py '$gpu'"
-    printf '\nRequested job: '; printf '%q ' "${command[@]}"
-    printf '\nApprove this Context3 GPU %s job? Type RUN GPU %s: ' "$gpu" "$gpu"
+    remote "cd '$REMOTE_DIR' && .venv/bin/python scripts/check_gpu.py '$gpus'"
+    printf '\nRequested job on GPU(s) %s' "$gpus"
+    [[ -n "$job_env" ]] && printf ' with environment: %s' "${job_env//export /}"
+    printf ': '; printf '%q ' "${command[@]}"
+    printf '\nApprove this Context3 GPU job? Type %s: ' "$phrase"
     IFS= read -r confirmation
-    if [[ "$confirmation" != "RUN GPU $gpu" ]]; then
+    if [[ "$confirmation" != "$phrase" ]]; then
       echo 'Cancelled. No GPU job started.'; exit 1
     fi
     # Quote every argument; prompts and paths must not become remote shell code.
     printf -v job '%q ' "${command[@]}"
     remote "set -eu
       $REMOTE_ENV
-      .venv/bin/python scripts/check_gpu.py '$gpu'
-      export CUDA_VISIBLE_DEVICES='$gpu'
+      .venv/bin/python scripts/check_gpu.py '$gpus'
+      export CUDA_VISIBLE_DEVICES='$gpus'
+      $job_env
       exec $job"
     ;;
-  *) echo 'Usage: context3.sh {check|sync|setup|run GPU STEPS [OPTIONS...]|infer GPU [OPTIONS...]}' >&2; exit 2 ;;
+  *) echo 'Usage: context3.sh {check|sync|setup|run GPUS STEPS [OPTIONS...]|infer GPUS [OPTIONS...]|smoke GPUS --output DIR [OPTIONS...]|nccl GPUS}' >&2; exit 2 ;;
 esac

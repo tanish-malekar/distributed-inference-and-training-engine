@@ -2,6 +2,7 @@
 
 import argparse
 import math
+import os
 
 import torch
 
@@ -29,7 +30,16 @@ def main():
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--output", default="outputs/smollm2")
     parser.add_argument("--resume", help="Checkpoint directory including training_state.pt")
+    parallel = parser.add_argument_group("parallelism (launch with torchrun; dp*tp*pp processes)")
+    parallel.add_argument("--dp", type=int, default=1, help="Data-parallel replicas")
+    parallel.add_argument("--tp", type=int, default=1, help="Tensor-parallel ways (must divide the head counts)")
+    parallel.add_argument("--pp", type=int, default=1, help="Pipeline stages")
+    parallel.add_argument("--microbatches", type=int, help="Microbatches per rank's batch (default: --pp)")
+    parallel.add_argument("--pp-schedule", choices=["1f1b", "gpipe"], default="1f1b")
+    parallel.add_argument("--dp-shard", action="store_true", help="Shard state across data-parallel ranks (FSDP)")
     args = parser.parse_args()
+    if args.microbatches is None:
+        args.microbatches = args.pp
     for name in ("steps", "batch_size", "eval_every", "train_rows", "validation_rows"):
         if getattr(args, name) < 1:
             parser.error(f"--{name.replace('_', '-')} must be positive")
@@ -40,7 +50,19 @@ def main():
         parser.error("Learning rate/gradient limit must be positive; weight decay must be nonnegative")
     if bool(args.train_file) != bool(args.validation_file):
         parser.error("Provide both --train-file and --validation-file, or neither")
-    run(args)
+    if min(args.dp, args.tp, args.pp, args.microbatches) < 1:
+        parser.error("--dp, --tp, --pp and --microbatches must be positive")
+    world = int(os.environ.get("WORLD_SIZE", 1))
+    if args.dp * args.tp * args.pp > 1 or world > 1:
+        if args.device == "mps":
+            parser.error("Parallel execution supports --device cuda or cpu")
+        if args.dp * args.tp * args.pp != world:
+            parser.error(f"dp*tp*pp = {args.dp * args.tp * args.pp} but torchrun started {world} "
+                         "processes; launch with: torchrun --standalone --nproc-per-node N train.py ...")
+        from parallel_train import run_parallel  # imported lazily: single-device runs need none of it
+        run_parallel(args)
+    else:
+        run(args)
 
 
 # Orchestrate data, local steps, evaluation, and checkpoints; no communication yet.

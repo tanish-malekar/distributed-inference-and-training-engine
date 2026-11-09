@@ -38,8 +38,14 @@
       "args": [
         "${workspaceFolder}/scripts/context3.sh",
         "run",
-        "${input:gpu}",
-        "1"
+        "${input:gpus}",
+        "1",
+        "--dp",
+        "${input:dp}",
+        "--tp",
+        "${input:tp}",
+        "--pp",
+        "${input:pp}"
       ],
       "problemMatcher": [],
       "presentation": {
@@ -55,11 +61,41 @@
       "args": [
         "${workspaceFolder}/scripts/context3.sh",
         "infer",
-        "${input:gpu}",
+        "${input:gpus}",
         "--model",
         "${input:model}",
         "--prompt",
-        "${input:prompt}"
+        "${input:prompt}",
+        "--dp",
+        "${input:dp}",
+        "--tp",
+        "${input:tp}",
+        "--pp",
+        "${input:pp}"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "focus": true,
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "Context3: Parallel smoke test (confirmation required)",
+      "type": "process",
+      "command": "bash",
+      "args": [
+        "${workspaceFolder}/scripts/context3.sh",
+        "smoke",
+        "${input:gpus}",
+        "--output",
+        "${input:smokeOutput}",
+        "--dp",
+        "${input:dp}",
+        "--tp",
+        "${input:tp}",
+        "--pp",
+        "${input:pp}"
       ],
       "problemMatcher": [],
       "presentation": {
@@ -71,16 +107,34 @@
   ],
   "inputs": [
     {
-      "id": "gpu",
-      "type": "pickString",
-      "description": "Choose an idle GPU after checking nvidia-smi. The terminal will ask for confirmation.",
-      "options": [
-        "0",
-        "1",
-        "2",
-        "3"
-      ],
-      "default": "0"
+      "id": "gpus",
+      "type": "promptString",
+      "default": "0",
+      "description": "GPU index, or comma-separated list (e.g. 0,1). Check nvidia-smi first; the terminal will ask for confirmation. The count must equal dp*tp*pp."
+    },
+    {
+      "id": "dp",
+      "type": "promptString",
+      "default": "1",
+      "description": "Data-parallel replicas"
+    },
+    {
+      "id": "tp",
+      "type": "promptString",
+      "default": "1",
+      "description": "Tensor-parallel ways (SmolLM2: 1 or 3)"
+    },
+    {
+      "id": "pp",
+      "type": "promptString",
+      "default": "1",
+      "description": "Pipeline stages"
+    },
+    {
+      "id": "smokeOutput",
+      "type": "promptString",
+      "default": "outputs/parallel-smoke",
+      "description": "Fresh remote output directory for the smoke test"
     },
     {
       "id": "model",

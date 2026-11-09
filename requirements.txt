@@ -1,5 +1,5 @@
 torch>=2.4,<3
-numpy>=1.26,<2
+numpy>=2.0
 transformers==5.22.2
 datasets==4.8.5
 safetensors>=0.4
