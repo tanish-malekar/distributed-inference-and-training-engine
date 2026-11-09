@@ -1,0 +1,98 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Context3: Check GPUs (read-only)",
+      "type": "process",
+      "command": "bash",
+      "args": [
+        "${workspaceFolder}/scripts/context3.sh",
+        "check"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "focus": true,
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "Context3: Set up and sync (no GPU)",
+      "type": "process",
+      "command": "bash",
+      "args": [
+        "${workspaceFolder}/scripts/context3.sh",
+        "setup"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "focus": true,
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "Context3: Fine-tune one step (confirmation required)",
+      "type": "process",
+      "command": "bash",
+      "args": [
+        "${workspaceFolder}/scripts/context3.sh",
+        "run",
+        "${input:gpu}",
+        "1"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "focus": true,
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "Context3: Generate text (confirmation required)",
+      "type": "process",
+      "command": "bash",
+      "args": [
+        "${workspaceFolder}/scripts/context3.sh",
+        "infer",
+        "${input:gpu}",
+        "--model",
+        "${input:model}",
+        "--prompt",
+        "${input:prompt}"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "focus": true,
+        "panel": "dedicated"
+      }
+    }
+  ],
+  "inputs": [
+    {
+      "id": "gpu",
+      "type": "pickString",
+      "description": "Choose an idle GPU after checking nvidia-smi. The terminal will ask for confirmation.",
+      "options": [
+        "0",
+        "1",
+        "2",
+        "3"
+      ],
+      "default": "0"
+    },
+    {
+      "id": "model",
+      "type": "promptString",
+      "description": "HF model ID or remote checkpoint directory",
+      "default": "HuggingFaceTB/SmolLM2-135M"
+    },
+    {
+      "id": "prompt",
+      "type": "promptString",
+      "description": "Text to continue",
+      "default": "The purpose of machine learning is"
+    }
+  ]
+}
